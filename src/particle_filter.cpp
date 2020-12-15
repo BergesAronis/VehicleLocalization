@@ -105,7 +105,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
      particles[i].weight = 1.0;
 
-     for (unsigned int k = 0; i < transformed_observations.size(); k++) {
+     for (unsigned int k = 0; k < transformed_observations.size(); k++) {
        double predict_x, predict_y;
        for (unsigned int j = 0; j < predictions.size(); j++) {
          if (predictions[j].id == transformed_observations[k].id) {
