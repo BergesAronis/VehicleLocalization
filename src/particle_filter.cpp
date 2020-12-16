@@ -121,7 +121,6 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
      particles[i].weight = 1.0;
 
      for (unsigned int k = 0; k < transformed_observations.size(); k++) {
-       double predict_x, predict_y;
        for (unsigned int j = 0; j < predictions.size(); j++) {
          if (predictions[j].id == transformed_observations[k].id) {
            particles[i].weight *= (1.0/2.0 * M_PI * std_landmark[0] * std_landmark[1]) * exp(-1.0 * ((pow((transformed_observations[k].x - predictions[j].x), 2)/(2.0 * pow(std_landmark[0], 2))) + (pow((transformed_observations[k].y - predictions[j].y), 2)/(2.0 * pow(std_landmark[1], 2)))));
@@ -142,7 +141,7 @@ void ParticleFilter::resample() {
    double max_weight = *max_element(weights.begin(), weights.end());
    double beta = 0.0;
 
-   for (int j = 0; j < particles.size(); j++) {
+   for (unsigned int j = 0; j < particles.size(); j++) {
      uniform_real_distribution<double> dist_weight(0.0, max_weight * 2.0);
      beta += dist_weight(gen);
      while (beta > weights[i]) {
