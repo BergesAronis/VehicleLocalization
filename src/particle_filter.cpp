@@ -8,6 +8,7 @@
 #include "particle_filter.h"
 
 #include <math.h>
+#include <cmath>
 #include <algorithm>
 #include <iostream>
 #include <iterator>
@@ -71,6 +72,20 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
 
 void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
                                      vector<LandmarkObs>& observations) {
+
+    for (unsigned int i=0; i < observations.size(); i++) {
+      double minimum_distance = numeric_limits<double>::max();
+      int map_id = -1;
+      for (unsigned int k=0; k < predicted.size(); k++) {
+        double current_distance = pow((observations[i].x - predicted[k].x), 2) + pow((observations[i].y - predicted[k].y), 2);
+
+        if (current_distance < minimum_distance) {
+          minimum_distance = current_distance;
+          map_id = predicted[k].id;
+        }
+      }
+      observations[i].id = map_id;
+    }
 
 
 }
