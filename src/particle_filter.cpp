@@ -128,9 +128,11 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
          if (predictions[j].id == transformed_observations[k].id) {
            px = predictions[j].x;
            py = predictions[j].y;
+
+
+           weight *= (1.0/2.0 * M_PI * std_landmark[0] * std_landmark[1])  * exp(-1.0 * ((pow((transformed_observations[k].x - px), 2)/(2.0 * pow(std_landmark[0], 2))) + (pow((transformed_observations[k].y - py), 2)/(2.0 * pow(std_landmark[1], 2)))));
           }
        }
-       weight *= (1.0/2.0 * M_PI * std_landmark[0] * std_landmark[1])  * exp(-1.0 * ((pow((transformed_observations[k].x - px), 2)/(2.0 * pow(std_landmark[0], 2))) + (pow((transformed_observations[k].y - py), 2)/(2.0 * pow(std_landmark[1], 2)))));
 
      }
      particles[i].weight = weight;
