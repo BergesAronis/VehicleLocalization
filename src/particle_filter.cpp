@@ -94,9 +94,9 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
                                    const vector<LandmarkObs> &observations,
                                    const Map &map_landmarks) {
 
-
+   vector<LandmarkObs> predictions;
    for (int i = 0; i < num_particles; i++) {
-     vector<LandmarkObs> predictions;
+
 
      for (unsigned int k = 0; k < map_landmarks.landmark_list.size(); k++) {
 
@@ -113,20 +113,28 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
      for (unsigned int k = 0; k < observations.size(); k++) {
        LandmarkObs transformed_observation;
        transformed_observation.id = k;
-       transformed_observation.x = cos(particles[i].theta) * observations[i].x - sin(particles[i].theta)*observations[i].y + particles[i].x;
-       transformed_observation.y = sin(particles[i].theta) * observations[i].x + cos(particles[i].theta)*observations[i].y + particles[i].y;
+       transformed_observation.x = cos(particles[i].theta) * observations[k].x - sin(particles[i].theta)*observations[k].y + particles[i].x;
+       transformed_observation.y = sin(particles[i].theta) * observations[k].x + cos(particles[i].theta)*observations[k].y + particles[i].y;
        transformed_observations.push_back(transformed_observation);
      }
 
-     particles[i].weight = 1.0;
+     dataAssociation(predictions, transformed_observations);
 
+     particles[i].weight = 1.0;
+     double px, py;
+	 double weight = 1.0;
      for (unsigned int k = 0; k < transformed_observations.size(); k++) {
        for (unsigned int j = 0; j < predictions.size(); j++) {
          if (predictions[j].id == transformed_observations[k].id) {
-           particles[i].weight *= (1.0/2.0 * M_PI * std_landmark[0] * std_landmark[1]) * exp(-1.0 * ((pow((transformed_observations[k].x - predictions[j].x), 2)/(2.0 * pow(std_landmark[0], 2))) + (pow((transformed_observations[k].y - predictions[j].y), 2)/(2.0 * pow(std_landmark[1], 2)))));
-         }
+           px = predictions[j].x;
+           py = predictions[j].y;
+          }
        }
+       weight *= (1.0/2.0 * M_PI * std_landmark[0] * std_landmark[1])  * exp(-1.0 * ((pow((transformed_observations[k].x - px), 2)/(2.0 * pow(std_landmark[0], 2))) + (pow((transformed_observations[k].y - py), 2)/(2.0 * pow(std_landmark[1], 2)))));
+
      }
+     particles[i].weight = weight;
+     weights[i] = weight;
    }
 }
 
@@ -135,15 +143,16 @@ void ParticleFilter::resample() {
    vector<Particle> new_particles;
    default_random_engine gen;
 
-   uniform_int_distribution<int> dist_index(0, num_particles-1);
+    uniform_int_distribution<int> dist_index(0, num_particles - 1);
    int i = dist_index(gen);
 
-   double max_weight = *max_element(weights.begin(), weights.end());
+   double max_weight = numeric_limits<double>::min();
    double beta = 0.0;
 
+   uniform_real_distribution<double> dist_weight(0.0, max_weight);
    for (unsigned int j = 0; j < particles.size(); j++) {
-     uniform_real_distribution<double> dist_weight(0.0, max_weight * 2.0);
-     beta += dist_weight(gen);
+
+     beta += dist_weight(gen) * 2.0;
      while (beta > weights[i]) {
        beta -= weights[i];
        i = (i + 1) % num_particles;
@@ -151,6 +160,7 @@ void ParticleFilter::resample() {
      new_particles.push_back(particles[i]);
    }
    particles = new_particles;
+
 }
 
 void ParticleFilter::SetAssociations(Particle& particle,

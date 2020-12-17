@@ -1,203 +1,174 @@
-/**
- * particle_filter.cpp
- *
- * Created on: Dec 12, 2016
- * Author: Tiffany Huang
- */
-
+#include <math.h>
+#include <uWS/uWS.h>
+#include <iostream>
+#include <string>
+#include "json.hpp"
 #include "particle_filter.h"
 
-#include <math.h>
-#include <cmath>
-#include <algorithm>
-#include <iostream>
-#include <iterator>
-#include <numeric>
-#include <random>
-#include <string>
-#include <vector>
-
-#include "helper_functions.h"
-
-using namespace std;
+// for convenience
+using nlohmann::json;
 using std::string;
 using std::vector;
 
-void ParticleFilter::init(double x, double y, double theta, double std[]) {
-  num_particles = 100;  // TODO: Set the number of particles
-  default_random_engine gen;
-  normal_distribution<double> dist_x(x, std[0]);
-  normal_distribution<double> dist_y(y, std[1]);
-  normal_distribution<double> dist_theta(theta, std[2]);
-
-  particles.resize(num_particles);
-  weights.resize(num_particles);
-  for (int i = 0; i < num_particles; i++) {
-    Particle temp_particle;
-    temp_particle.id  = i;
-    temp_particle.x = dist_x(gen);
-    temp_particle.y = dist_y(gen);
-    temp_particle.theta = dist_theta(gen);
-    temp_particle.weight = 1.0;
-    particles.push_back(temp_particle);
-    weights.push_back(temp_particle.weight);
+// Checks if the SocketIO event has JSON data.
+// If there is data the JSON object in string format will be returned,
+// else the empty string "" will be returned.
+string hasData(string s) {
+  auto found_null = s.find("null");
+  auto b1 = s.find_first_of("[");
+  auto b2 = s.find_first_of("]");
+  if (found_null != string::npos) {
+    return "";
+  } else if (b1 != string::npos && b2 != string::npos) {
+    return s.substr(b1, b2 - b1 + 1);
   }
-  is_initialized = true;
+  return "";
 }
 
-void ParticleFilter::prediction(double delta_t, double std_pos[],
-                                double velocity, double yaw_rate) {
-   default_random_engine gen;
-   normal_distribution<double> dist_x(0, std_pos[0]);
-   normal_distribution<double> dist_y(0, std_pos[1]);
-   normal_distribution<double> dist_theta(0, std_pos[2]);
+int main() {
+  uWS::Hub h;
 
-   for (int i = 0; i < num_particles; i++) {
+  // Set up parameters here
+  double delta_t = 0.1;  // Time elapsed between measurements [sec]
+  double sensor_range = 50;  // Sensor range [m]
 
-     if (fabs(yaw_rate) < 0.00001) {
-       particles[i].x += delta_t * velocity * cos(particles[i].theta);
-       particles[i].y += delta_t * velocity * sin(particles[i].theta);
-     } else {
-       particles[i].x += (sin(particles[i].theta + delta_t*yaw_rate) - sin(particles[i].theta)) * (velocity/yaw_rate);
-       particles[i].y += (cos(particles[i].theta) - cos(particles[i].theta + delta_t*yaw_rate)) * (velocity/yaw_rate);
-       particles[i].theta += yaw_rate * delta_t;
-     }
+  // GPS measurement uncertainty [x [m], y [m], theta [rad]]
+  double sigma_pos [3] = {0.3, 0.3, 0.01};
+  // Landmark measurement uncertainty [x [m], y [m]]
+  double sigma_landmark [2] = {0.3, 0.3};
 
-     particles[i].x += dist_x(gen);
-     particles[i].y += dist_y(gen);
-     particles[i].theta += dist_theta(gen);
-   }
+  // Read map data
+  Map map;
+  if (!read_map_data("../data/map_data.txt", map)) {
+    std::cout << "Error: Could not open map file" << std::endl;
+    return -1;
+  }
 
-}
+  // Create particle filter
+  ParticleFilter pf;
 
-void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
-                                     vector<LandmarkObs>& observations) {
+  h.onMessage([&pf,&map,&delta_t,&sensor_range,&sigma_pos,&sigma_landmark]
+              (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+               uWS::OpCode opCode) {
+    // "42" at the start of the message means there's a websocket message event.
+    // The 4 signifies a websocket message
+    // The 2 signifies a websocket event
+    if (length && length > 2 && data[0] == '4' && data[1] == '2') {
+      auto s = hasData(string(data));
 
-    for (unsigned int i=0; i < observations.size(); i++) {
-      double minimum_distance = numeric_limits<double>::max();
-      int map_id = -1;
-      for (unsigned int k=0; k < predicted.size(); k++) {
-        double current_distance = pow((observations[i].x - predicted[k].x), 2) + pow((observations[i].y - predicted[k].y), 2);
+      if (s != "") {
+        auto j = json::parse(s);
 
-        if (current_distance < minimum_distance) {
-          minimum_distance = current_distance;
-          map_id = predicted[k].id;
-        }
-      }
-      observations[i].id = map_id;
-    }
+        string event = j[0].get<string>();
 
+        if (event == "telemetry") {
+          // j[1] is the data JSON object
+          if (!pf.initialized()) {
+            // Sense noisy position data from the simulator
+            double sense_x = std::stod(j[1]["sense_x"].get<string>());
+            double sense_y = std::stod(j[1]["sense_y"].get<string>());
+            double sense_theta = std::stod(j[1]["sense_theta"].get<string>());
 
-}
+            pf.init(sense_x, sense_y, sense_theta, sigma_pos);
+          } else {
+            // Predict the vehicle's next state from previous
+            //   (noiseless control) data.
+            double previous_velocity = std::stod(j[1]["previous_velocity"].get<string>());
+            double previous_yawrate = std::stod(j[1]["previous_yawrate"].get<string>());
 
-void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
-                                   const vector<LandmarkObs> &observations,
-                                   const Map &map_landmarks) {
-
-   vector<LandmarkObs> predictions;
-   for (int i = 0; i < num_particles; i++) {
-
-
-     for (unsigned int k = 0; k < map_landmarks.landmark_list.size(); k++) {
-
-       if (fabs(map_landmarks.landmark_list[k].x_f - particles[i].x) <= sensor_range &&
-           fabs(map_landmarks.landmark_list[k].y_f - particles[i].y) <= sensor_range) {
-         predictions.push_back(LandmarkObs{ map_landmarks.landmark_list[k].id_i,
-                                            map_landmarks.landmark_list[k].x_f,
-                                            map_landmarks.landmark_list[k].y_f});
-       }
-
-     }
-
-     vector<LandmarkObs> transformed_observations;
-     for (unsigned int k = 0; k < observations.size(); k++) {
-       LandmarkObs transformed_observation;
-       transformed_observation.id = k;
-       transformed_observation.x = cos(particles[i].theta) * observations[k].x - sin(particles[i].theta)*observations[k].y + particles[i].x;
-       transformed_observation.y = sin(particles[i].theta) * observations[k].x + cos(particles[i].theta)*observations[k].y + particles[i].y;
-       transformed_observations.push_back(transformed_observation);
-     }
-
-     dataAssociation(predictions, transformed_observations);
-
-     particles[i].weight = 1.0;
-     double px, py;
-	 double weight = 1.0;
-     for (unsigned int k = 0; k < transformed_observations.size(); k++) {
-       for (unsigned int j = 0; j < predictions.size(); j++) {
-         if (predictions[j].id == transformed_observations[k].id) {
-           px = predictions[j].x;
-           py = predictions[j].y;
+            pf.prediction(delta_t, sigma_pos, previous_velocity, previous_yawrate);
           }
-       }
-       weight *= (1.0/2.0 * M_PI * std_landmark[0] * std_landmark[1])  * exp(-1.0 * ((pow((transformed_observations[k].x - px), 2)/(2.0 * pow(std_landmark[0], 2))) + (pow((transformed_observations[k].y - py), 2)/(2.0 * pow(std_landmark[1], 2)))));
 
-     }
-     particles[i].weight = weight;
-     weights[i] = weight;
-   }
-}
+          // receive noisy observation data from the simulator
+          // sense_observations in JSON format
+          //   [{obs_x,obs_y},{obs_x,obs_y},...{obs_x,obs_y}]
+          vector<LandmarkObs> noisy_observations;
+          string sense_observations_x = j[1]["sense_observations_x"];
+          string sense_observations_y = j[1]["sense_observations_y"];
 
-void ParticleFilter::resample() {
+          vector<float> x_sense;
+          std::istringstream iss_x(sense_observations_x);
 
-   vector<Particle> new_particles;
-   default_random_engine gen;
+          std::copy(std::istream_iterator<float>(iss_x),
+          std::istream_iterator<float>(),
+          std::back_inserter(x_sense));
 
-    uniform_int_distribution<int> dist_index(0, num_particles - 1);
-   int i = dist_index(gen);
+          vector<float> y_sense;
+          std::istringstream iss_y(sense_observations_y);
 
-   double max_weight = numeric_limits<double>::min();
-   double beta = 0.0;
+          std::copy(std::istream_iterator<float>(iss_y),
+          std::istream_iterator<float>(),
+          std::back_inserter(y_sense));
 
-   uniform_real_distribution<double> dist_weight(0.0, max_weight);
-   for (unsigned int j = 0; j < particles.size(); j++) {
+          for (int i = 0; i < x_sense.size(); ++i) {
+            LandmarkObs obs;
+            obs.x = x_sense[i];
+            obs.y = y_sense[i];
+            noisy_observations.push_back(obs);
+          }
 
-     beta += dist_weight(gen) * 2.0;
-     while (beta > weights[i]) {
-       beta -= weights[i];
-       i = (i + 1) % num_particles;
-     }
-     new_particles.push_back(particles[i]);
-   }
-   particles = new_particles;
+          // Update the weights and resample
+          pf.updateWeights(sensor_range, sigma_landmark, noisy_observations, map);
+          pf.resample();
 
-}
+          // Calculate and output the average weighted error of the particle
+          //   filter over all time steps so far.
+          vector<Particle> particles = pf.particles;
+          int num_particles = particles.size();
+          double highest_weight = -1.0;
+          Particle best_particle;
+          double weight_sum = 0.0;
+          for (int i = 0; i < num_particles; ++i) {
+            if (particles[i].weight > highest_weight) {
+              highest_weight = particles[i].weight;
+              best_particle = particles[i];
+            }
 
-void ParticleFilter::SetAssociations(Particle& particle,
-                                     const vector<int>& associations,
-                                     const vector<double>& sense_x,
-                                     const vector<double>& sense_y) {
-  // particle: the particle to which assign each listed association,
-  //   and association's (x,y) world coordinates mapping
-  // associations: The landmark id that goes along with each listed association
-  // sense_x: the associations x mapping already converted to world coordinates
-  // sense_y: the associations y mapping already converted to world coordinates
-  particle.associations= associations;
-  particle.sense_x = sense_x;
-  particle.sense_y = sense_y;
-}
+            weight_sum += particles[i].weight;
+          }
 
-string ParticleFilter::getAssociations(Particle best) {
-  vector<int> v = best.associations;
-  std::stringstream ss;
-  copy(v.begin(), v.end(), std::ostream_iterator<int>(ss, " "));
-  string s = ss.str();
-  s = s.substr(0, s.length()-1);  // get rid of the trailing space
-  return s;
-}
+          std::cout << "highest w " << highest_weight << std::endl;
+          std::cout << "average w " << weight_sum/num_particles << std::endl;
 
-string ParticleFilter::getSenseCoord(Particle best, string coord) {
-  vector<double> v;
+          json msgJson;
+          msgJson["best_particle_x"] = best_particle.x;
+          msgJson["best_particle_y"] = best_particle.y;
+          msgJson["best_particle_theta"] = best_particle.theta;
 
-  if (coord == "X") {
-    v = best.sense_x;
+          // Optional message data used for debugging particle's sensing
+          //   and associations
+          msgJson["best_particle_associations"] = pf.getAssociations(best_particle);
+          msgJson["best_particle_sense_x"] = pf.getSenseCoord(best_particle, "X");
+          msgJson["best_particle_sense_y"] = pf.getSenseCoord(best_particle, "Y");
+
+          auto msg = "42[\"best_particle\"," + msgJson.dump() + "]";
+          // std::cout << msg << std::endl;
+          ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+        }  // end "telemetry" if
+      } else {
+        string msg = "42[\"manual\",{}]";
+        ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+      }
+    }  // end websocket message if
+  }); // end h.onMessage
+
+  h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
+    std::cout << "Connected!!!" << std::endl;
+  });
+
+  h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code,
+                         char *message, size_t length) {
+    ws.close();
+    std::cout << "Disconnected" << std::endl;
+  });
+
+  int port = 4567;
+  if (h.listen(port)) {
+    std::cout << "Listening to port " << port << std::endl;
   } else {
-    v = best.sense_y;
+    std::cerr << "Failed to listen to port" << std::endl;
+    return -1;
   }
 
-  std::stringstream ss;
-  copy(v.begin(), v.end(), std::ostream_iterator<float>(ss, " "));
-  string s = ss.str();
-  s = s.substr(0, s.length()-1);  // get rid of the trailing space
-  return s;
+  h.run();
 }
